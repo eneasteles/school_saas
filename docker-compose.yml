@@ -1,0 +1,140 @@
+# Docker Compose - Orquestração de Containers
+# Este arquivo define e configura todos os serviços necessários para a aplicação
+
+# Versão do formato do docker-compose
+version: '3.8'
+
+# Definição dos serviços
+services:
+  # Serviço do Banco de Dados PostgreSQL
+  db:
+    # Usa a imagem oficial do PostgreSQL versão 16
+    image: postgres:16-alpine
+    
+    # Nome do container
+    container_name: school_saas_db
+    
+    # Reinicia automaticamente se o container parar
+    restart: unless-stopped
+    
+    # Variáveis de ambiente para configurar o PostgreSQL
+    environment:
+      # Usuário do banco de dados
+      POSTGRES_USER: school_admin
+      # Senha do banco de dados
+      POSTGRES_PASSWORD: school_password
+      # Nome do banco de dados
+      POSTGRES_DB: school_saas
+      # Configurações de encoding
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=pt_BR.UTF-8 --lc-ctype=pt_BR.UTF-8"
+    
+    # Portas expostas (host:container)
+    ports:
+      - "5432:5432"
+    
+    # Volume para persistir os dados do banco
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Scripts de inicialização do banco
+      - ./migrations:/docker-entrypoint-initdb.d
+    
+    # Rede interna para comunicação entre containers
+    networks:
+      - school_network
+    
+    # Healthcheck para verificar se o banco está pronto
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U school_admin -d school_saas"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Serviço da Aplicação Web
+  web:
+    # Constrói a imagem a partir do Dockerfile local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    # Nome do container
+    container_name: school_saas_web
+    
+    # Reinicia automaticamente se o container parar
+    restart: unless-stopped
+    
+    # Portas expostas (host:container)
+    ports:
+      - "8080:8080"
+    
+    # Variáveis de ambiente (substitui o arquivo .env)
+    environment:
+      - DATABASE_URL=postgres://school_admin:school_password@db:5432/school_saas
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - JWT_SECRET=desenvolvimento_chave_secreta_nao_usar_em_producao
+      - JWT_EXPIRATION=86400
+      - RUST_ENV=development
+      - RUST_LOG=debug
+      - CORS_ALLOWED_ORIGINS=http://localhost:8080,http://localhost:3000
+    
+    # Depende do serviço do banco de dados
+    depends_on:
+      db:
+        condition: service_healthy
+    
+    # Volumes para desenvolvimento (hot-reload)
+    volumes:
+      # Volume para uploads
+      - uploads_data:/app/uploads
+    
+    # Rede interna
+    networks:
+      - school_network
+
+  # Serviço PgAdmin (Interface Web para PostgreSQL) - Opcional para desenvolvimento
+  pgadmin:
+    # Imagem oficial do PgAdmin
+    image: dpage/pgadmin4:latest
+    
+    # Nome do container
+    container_name: school_saas_pgadmin
+    
+    # Reinicia automaticamente
+    restart: unless-stopped
+    
+    # Variáveis de ambiente
+    environment:
+      # Email padrão para login
+      PGADMIN_DEFAULT_EMAIL: admin@school.com
+      # Senha padrão para login
+      PGADMIN_DEFAULT_PASSWORD: admin
+      # Desabilita modo servidor (não requer login)
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    
+    # Portas expostas
+    ports:
+      - "5050:80"
+    
+    # Depende do banco de dados
+    depends_on:
+      - db
+    
+    # Rede interna
+    networks:
+      - school_network
+
+# Definição dos volumes persistentes
+volumes:
+  # Volume para dados do PostgreSQL
+  postgres_data:
+    driver: local
+  
+  # Volume para uploads da aplicação
+  uploads_data:
+    driver: local
+
+# Definição das redes
+networks:
+  # Rede interna para comunicação entre containers
+  school_network:
+    driver: bridge
