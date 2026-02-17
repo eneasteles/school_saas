@@ -21,3 +21,7 @@ target
 #.idea/
 .env
 .env.*
+
+# env files
+.env
+.env.*
