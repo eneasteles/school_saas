@@ -28,7 +28,7 @@ pub struct AuthState {
 pub struct RegisterRequest {
     #[validate(length(min = 2))]
     pub school_name: String,
-
+    pub school_code: String,
     #[validate(email)]
     pub email: String,
 
@@ -38,15 +38,16 @@ pub struct RegisterRequest {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct LoginRequest {
+    #[validate(length(min = 3))]
+    pub school_code: String,
+
     #[validate(email)]
     pub email: String,
 
     #[validate(length(min = 1))]
     pub password: String,
-
-    // No nosso SaaS, email é único por tenant, então precisamos do tenant_id
-    pub tenant_id: Uuid,
 }
+
 
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
@@ -91,10 +92,16 @@ async fn register(
 
     // Transação: cria tenant + cria owner
     let mut tx = state.pool.begin().await.map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+    let slug = req.school_code.trim().to_lowercase();
 
-    sqlx::query(r#"INSERT INTO tenants (id, name) VALUES ($1, $2)"#)
+    if slug.len() < 3 || !slug.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        return Err((StatusCode::BAD_REQUEST, "Código da escola inválido (use letras, números e hífen)".into()));
+    }
+
+    sqlx::query(r#"INSERT INTO tenants (id, name, slug) VALUES ($1, $2, $3)"#)
     .bind(tenant_id)
     .bind(req.school_name.clone())
+    .bind(&slug)
     .execute(&mut *tx)
     .await
     .map_err(|e| (StatusCode::BAD_REQUEST, format!("Erro criando escola: {e}")))?;
@@ -132,20 +139,28 @@ async fn login(
 ) -> Result<Json<AuthResponse>, (StatusCode, String)> {
     req.validate().map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
+    let school_code = req.school_code.trim().to_lowercase();
+    let email = req.email.trim().to_lowercase();
+
     let row = sqlx::query(
-    r#"SELECT id, password_hash, role
-       FROM users
-       WHERE tenant_id = $1 AND email = $2"#,
+        r#"
+        SELECT u.id, u.tenant_id, u.password_hash, u.role
+        FROM users u
+        JOIN tenants t ON t.id = u.tenant_id
+        WHERE t.slug = $1 AND u.email = $2
+        "#,
     )
-    .bind(req.tenant_id)
-    .bind(req.email.clone())
+    .bind(&school_code)
+    .bind(&email)
     .fetch_optional(&state.pool)
     .await
     .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
 
 
+
     let row = row.ok_or((StatusCode::UNAUTHORIZED, "Credenciais inválidas".into()))?;
     let user_id: Uuid = row.get("id");
+    let tenant_id: Uuid = row.get("tenant_id"); 
     let password_hash_db: String = row.get("password_hash");
     let role: String = row.get("role");
 
@@ -157,11 +172,11 @@ async fn login(
         .verify_password(req.password.as_bytes(), &parsed_hash)
         .map_err(|_| (StatusCode::UNAUTHORIZED, "Credenciais inválidas".into()))?;
 
-    let token = make_jwt(&state.jwt_secret, user_id, req.tenant_id, &role)
+    let token = make_jwt(&state.jwt_secret, user_id, tenant_id, &role)
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro token".into()))?;
 
     Ok(Json(AuthResponse {
-        tenant_id: req.tenant_id,
+        tenant_id,
         user_id,
         token,
     }))
