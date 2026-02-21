@@ -9,7 +9,10 @@ export default function PrivateLayout({ children }: { children: React.ReactNode 
   useEffect(() => {
     const token = localStorage.getItem("token");
     const tenantId = localStorage.getItem("tenant_id");
-    if (!token || !tenantId) router.replace("/login");
+
+    if (!token || !tenantId) {
+      router.replace("/login");
+    }
   }, [router]);
 
   return <>{children}</>;

@@ -4,7 +4,7 @@ services:
     container_name: school_db
     environment:
       POSTGRES_USER: eneasteles
-      POSTGRES_PASSWORD: kajumi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: school_saas
     ports:
       - "5432:5432"
