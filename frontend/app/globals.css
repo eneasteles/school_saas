@@ -24,3 +24,68 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+h1,
+h2,
+h3 {
+  color: #0a0a0a;
+  font-weight: 700;
+}
+
+button {
+  font-weight: 700;
+}
+
+/* Increase contrast for outline/white buttons used across pages */
+button[class*="bg-white"][class*="border"],
+button[class*="border-neutral-200"],
+button[class*="border-neutral-300"],
+button[class*="border-neutral-400"] {
+  border-width: 2px;
+  border-color: #374151 !important;
+  color: #111827 !important;
+}
+
+button[class*="bg-white"][class*="hover:bg-neutral-50"]:hover,
+button[class*="bg-white"][class*="hover:bg-neutral-100"]:hover {
+  background: #e5e7eb !important;
+}
+
+/* Form controls: force high contrast and clear active state across pages */
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  color: #111827;
+  background: #ffffff;
+  border-color: #52525b;
+  caret-color: #111827;
+}
+
+input:not([type="checkbox"]):not([type="radio"])::placeholder,
+textarea::placeholder {
+  color: #6b7280;
+  opacity: 1;
+}
+
+select option {
+  color: #111827;
+  background: #ffffff;
+}
+
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 2.5rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='M5 7.5L10 12.5L15 7.5' stroke='%23374151' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.85rem center;
+  background-size: 14px 14px;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.25);
+}

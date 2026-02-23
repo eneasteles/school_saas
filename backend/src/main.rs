@@ -2,6 +2,8 @@ mod config;
 mod db;
 mod routes;
 mod models;
+mod auth;
+mod state;
 
 use axum::http::Method;
 use axum::Router;
@@ -29,7 +31,23 @@ async fn main() {
     let app = Router::new()
         .merge(routes::health::routes())
         .merge(routes::auth::routes(pool.clone(), cfg.jwt_secret.clone()))
-        .merge(routes::students::routes(pool.clone()))
+        .merge(routes::platform_auth::routes(
+            cfg.jwt_secret.clone(),
+            cfg.platform_admin_email.clone(),
+            cfg.platform_admin_password.clone(),
+        ))
+        .merge(routes::admin::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::dashboard::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::teachers::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::session::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::school_settings::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::subjects::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::terms::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::records::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::students::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::classes::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::guardians::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::people::routes(pool.clone(), cfg.jwt_secret.clone()))
         .layer(cors);
 
     let listener = tokio::net::TcpListener::bind(&cfg.bind_addr)

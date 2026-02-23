@@ -13,10 +13,20 @@ CREATE TABLE IF NOT EXISTS classes (
 ALTER TABLE students
   ADD COLUMN IF NOT EXISTS class_id uuid NULL;
 
-ALTER TABLE students
-  ADD CONSTRAINT IF NOT EXISTS students_class_id_fkey
-  FOREIGN KEY (class_id) REFERENCES classes(id)
-  ON DELETE SET NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'students_class_id_fkey'
+  ) THEN
+    ALTER TABLE students
+      ADD CONSTRAINT students_class_id_fkey
+      FOREIGN KEY (class_id) REFERENCES classes(id)
+      ON DELETE SET NULL;
+  END IF;
+END
+$$;
 
 CREATE INDEX IF NOT EXISTS idx_classes_tenant_id ON classes(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_students_tenant_id ON students(tenant_id);

@@ -1,4 +1,16 @@
 pub mod health;
 pub mod auth;
+pub mod platform_auth;
+pub mod admin;
+pub mod dashboard;
+pub mod teachers;
+pub mod session;
+pub mod school_settings;
+pub mod records;
+pub mod subjects;
+pub mod terms;
 //pub mod tenants;
 pub mod students;
+pub mod classes;
+pub mod guardians;
+pub mod people;

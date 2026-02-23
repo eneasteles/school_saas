@@ -46,14 +46,22 @@ export default function LoginPage() {
       const txt = await res.text();
       if (!res.ok) throw new Error(txt || "Erro no login");
 
-      const data = JSON.parse(txt) as { tenant_id: string; user_id: string; token: string };
+      const data = JSON.parse(txt) as {
+        tenant_id: string;
+        user_id: string;
+        token: string;
+        school_name?: string;
+        school_code?: string;
+      };
 
       localStorage.setItem("tenant_id", data.tenant_id);
       localStorage.setItem("token", data.token);
+      localStorage.setItem("school_code", data.school_code ?? school_code);
+      if (data.school_name) localStorage.setItem("school_name", data.school_name);
 
       router.replace("/students");
-    } catch (err: any) {
-      setError(err?.message ?? "Erro inesperado");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Erro inesperado");
     } finally {
       setBusy(false);
     }

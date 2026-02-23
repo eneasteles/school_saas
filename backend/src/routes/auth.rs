@@ -54,13 +54,16 @@ pub struct AuthResponse {
     pub tenant_id: Uuid,
     pub user_id: Uuid,
     pub token: String,
+    pub school_name: String,
+    pub school_code: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
     sub: String,        // user_id
-    tenant_id: String,  // tenant_id
+    tenant_id: Option<String>,  // tenant_id
     role: String,
+    scope: String,
     exp: usize,         // expiração
 }
 
@@ -98,7 +101,12 @@ async fn register(
         return Err((StatusCode::BAD_REQUEST, "Código da escola inválido (use letras, números e hífen)".into()));
     }
 
-    sqlx::query(r#"INSERT INTO tenants (id, name, slug) VALUES ($1, $2, $3)"#)
+    sqlx::query(
+        r#"
+        INSERT INTO tenants (id, name, slug, billing_due_date)
+        VALUES ($1, $2, $3, (CURRENT_DATE + INTERVAL '30 days')::date)
+        "#,
+    )
     .bind(tenant_id)
     .bind(req.school_name.clone())
     .bind(&slug)
@@ -107,13 +115,41 @@ async fn register(
     .map_err(|e| (StatusCode::BAD_REQUEST, format!("Erro criando escola: {e}")))?;
 
 
+    let owner_name = req.school_name.trim().to_string();
+    let owner_email = req.email.trim().to_lowercase();
+
     sqlx::query(
-    r#"INSERT INTO users (id, tenant_id, email, password_hash, role)
-       VALUES ($1, $2, $3, $4, $5)"#,
+        r#"
+        INSERT INTO people (id, tenant_id, person_type, full_name, email, phone, is_active)
+        VALUES ($1, $2, 'staff', $3, $4, NULL, TRUE)
+        "#,
     )
     .bind(user_id)
     .bind(tenant_id)
-    .bind(req.email.clone())
+    .bind(owner_name)
+    .bind(owner_email.clone())
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| (StatusCode::BAD_REQUEST, format!("Erro criando cadastro base: {e}")))?;
+
+    sqlx::query(
+        r#"INSERT INTO person_roles (person_id, role_code)
+           VALUES ($1, 'staff')
+           ON CONFLICT (person_id, role_code) DO NOTHING"#,
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| (StatusCode::BAD_REQUEST, format!("Erro criando papel base: {e}")))?;
+
+    sqlx::query(
+        r#"INSERT INTO users (id, tenant_id, person_id, email, password_hash, role)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    )
+    .bind(user_id)
+    .bind(tenant_id)
+    .bind(user_id)
+    .bind(owner_email)
     .bind(password_hash)
     .bind("owner")
     .execute(&mut *tx)
@@ -130,6 +166,8 @@ async fn register(
         tenant_id,
         user_id,
         token,
+        school_name: req.school_name,
+        school_code: slug,
     }))
 }
 
@@ -145,6 +183,7 @@ async fn login(
     let row = sqlx::query(
         r#"
         SELECT u.id, u.tenant_id, u.password_hash, u.role
+             , t.name as school_name, t.slug as school_code
         FROM users u
         JOIN tenants t ON t.id = u.tenant_id
         WHERE t.slug = $1 AND u.email = $2
@@ -163,6 +202,8 @@ async fn login(
     let tenant_id: Uuid = row.get("tenant_id"); 
     let password_hash_db: String = row.get("password_hash");
     let role: String = row.get("role");
+    let school_name: String = row.get("school_name");
+    let school_code: String = row.get("school_code");
 
     // Verifica senha Argon2
     let parsed_hash = PasswordHash::new(&password_hash_db)
@@ -179,6 +220,8 @@ async fn login(
         tenant_id,
         user_id,
         token,
+        school_name,
+        school_code,
     }))
 }
 
@@ -188,8 +231,9 @@ fn make_jwt(jwt_secret: &str, user_id: Uuid, tenant_id: Uuid, role: &str) -> Res
 
     let claims = Claims {
         sub: user_id.to_string(),
-        tenant_id: tenant_id.to_string(),
+        tenant_id: Some(tenant_id.to_string()),
         role: role.to_string(),
+        scope: "tenant".to_string(),
         exp,
     };
 
