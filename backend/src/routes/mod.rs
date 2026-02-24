@@ -14,3 +14,4 @@ pub mod students;
 pub mod classes;
 pub mod guardians;
 pub mod people;
+pub mod financial;

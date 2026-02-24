@@ -28,6 +28,17 @@ pub struct CreatePersonRequest {
     pub email: Option<String>,
     pub phone: Option<String>,
     pub document: Option<String>,
+    pub photo_url: Option<String>,
+    pub zip_code: Option<String>,
+    pub street: Option<String>,
+    pub address_number: Option<String>,
+    pub neighborhood: Option<String>,
+    pub complement: Option<String>,
+    pub state_ibge_code: Option<i32>,
+    pub state_uf: Option<String>,
+    pub state_name: Option<String>,
+    pub city_ibge_code: Option<i32>,
+    pub city_name: Option<String>,
     pub notes: Option<String>,
     pub is_active: Option<bool>,
 }
@@ -39,6 +50,17 @@ pub struct UpdatePersonRequest {
     pub email: Option<String>,
     pub phone: Option<String>,
     pub document: Option<String>,
+    pub photo_url: Option<String>,
+    pub zip_code: Option<String>,
+    pub street: Option<String>,
+    pub address_number: Option<String>,
+    pub neighborhood: Option<String>,
+    pub complement: Option<String>,
+    pub state_ibge_code: Option<i32>,
+    pub state_uf: Option<String>,
+    pub state_name: Option<String>,
+    pub city_ibge_code: Option<i32>,
+    pub city_name: Option<String>,
     pub notes: Option<String>,
     pub is_active: bool,
 }
@@ -53,6 +75,20 @@ pub struct PersonResponse {
     pub email: Option<String>,
     pub phone: Option<String>,
     pub document: Option<String>,
+    pub photo_url: Option<String>,
+    pub zip_code: Option<String>,
+    pub street: Option<String>,
+    pub address_number: Option<String>,
+    pub neighborhood: Option<String>,
+    pub complement: Option<String>,
+    pub state_ibge_code: Option<i32>,
+    pub state_uf: Option<String>,
+    pub state_name: Option<String>,
+    pub city_ibge_code: Option<i32>,
+    pub city_name: Option<String>,
+    pub parent_student_ids: Vec<Uuid>,
+    pub pickup_student_ids: Vec<Uuid>,
+    pub financial_student_ids: Vec<Uuid>,
     pub notes: Option<String>,
     pub is_active: bool,
 }
@@ -62,6 +98,21 @@ pub struct RoleInputRequest {
     pub role_code: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateParentStudentsRequest {
+    pub student_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePickupStudentsRequest {
+    pub student_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateFinancialStudentsRequest {
+    pub student_ids: Vec<Uuid>,
+}
+
 pub fn routes(pool: sqlx::PgPool, jwt_secret: String) -> Router {
     let state = AppState { pool, jwt_secret };
     Router::new()
@@ -69,6 +120,9 @@ pub fn routes(pool: sqlx::PgPool, jwt_secret: String) -> Router {
         .route("/people/:person_id", axum::routing::put(update_person).delete(delete_person))
         .route("/people/:person_id/roles", axum::routing::post(add_role))
         .route("/people/:person_id/roles/:role_code", axum::routing::delete(remove_role))
+        .route("/people/:person_id/students", axum::routing::put(update_parent_students))
+        .route("/people/:person_id/pickup-students", axum::routing::put(update_pickup_students))
+        .route("/people/:person_id/financial-students", axum::routing::put(update_financial_students))
         .with_state(state)
 }
 
@@ -92,14 +146,46 @@ async fn list_people(
           p.email,
           p.phone,
           p.document,
+          p.photo_url,
+          p.zip_code,
+          p.street,
+          p.address_number,
+          p.neighborhood,
+          p.complement,
+          p.state_ibge_code,
+          p.state_uf,
+          p.state_name,
+          p.city_ibge_code,
+          p.city_name,
+          COALESCE(
+            ARRAY_AGG(DISTINCT ps.student_id ORDER BY ps.student_id) FILTER (WHERE ps.student_id IS NOT NULL),
+            ARRAY[]::uuid[]
+          ) AS parent_student_ids,
+          COALESCE(
+            ARRAY_AGG(DISTINCT pas.student_id ORDER BY pas.student_id) FILTER (WHERE pas.student_id IS NOT NULL),
+            ARRAY[]::uuid[]
+          ) AS pickup_student_ids,
+          COALESCE(
+            ARRAY_AGG(DISTINCT fgs.student_id ORDER BY fgs.student_id) FILTER (WHERE fgs.student_id IS NOT NULL),
+            ARRAY[]::uuid[]
+          ) AS financial_student_ids,
           p.notes,
           p.is_active,
           COALESCE(
-            ARRAY_AGG(pr.role_code ORDER BY pr.role_code) FILTER (WHERE pr.role_code IS NOT NULL),
+            ARRAY_AGG(DISTINCT pr.role_code ORDER BY pr.role_code) FILTER (WHERE pr.role_code IS NOT NULL),
             ARRAY[]::text[]
           ) AS role_codes
         FROM people p
         LEFT JOIN person_roles pr ON pr.person_id = p.id
+        LEFT JOIN parent_students ps
+          ON ps.parent_person_id = p.id
+         AND ps.tenant_id = p.tenant_id
+        LEFT JOIN pickup_authorized_students pas
+          ON pas.pickup_person_id = p.id
+         AND pas.tenant_id = p.tenant_id
+        LEFT JOIN financial_guardian_students fgs
+          ON fgs.financial_person_id = p.id
+         AND fgs.tenant_id = p.tenant_id
         WHERE p.tenant_id = $1
           AND (
                 $2::text IS NULL
@@ -116,7 +202,9 @@ async fn list_people(
              OR lower(COALESCE(p.email, '')) LIKE ('%' || $4 || '%')
              OR lower(COALESCE(p.document, '')) LIKE ('%' || $4 || '%')
           )
-        GROUP BY p.id, p.tenant_id, p.person_type, p.full_name, p.email, p.phone, p.document, p.notes, p.is_active
+        GROUP BY p.id, p.tenant_id, p.person_type, p.full_name, p.email, p.phone, p.document, p.photo_url, p.zip_code, p.street,
+                 p.address_number, p.neighborhood, p.complement, p.state_ibge_code, p.state_uf, p.state_name,
+                 p.city_ibge_code, p.city_name, p.notes, p.is_active
         ORDER BY lower(p.full_name) ASC
         "#,
     )
@@ -146,6 +234,17 @@ async fn create_person(
     let email = normalize_optional_text(req.email);
     let phone = normalize_optional_text(req.phone);
     let document = normalize_optional_text(req.document);
+    let photo_url = normalize_optional_text(req.photo_url);
+    let zip_code = normalize_optional_text(req.zip_code);
+    let street = normalize_optional_text(req.street);
+    let address_number = normalize_optional_text(req.address_number);
+    let neighborhood = normalize_optional_text(req.neighborhood);
+    let complement = normalize_optional_text(req.complement);
+    let state_ibge_code = req.state_ibge_code;
+    let state_uf = normalize_optional_text(req.state_uf).map(|v| v.to_uppercase());
+    let state_name = normalize_optional_text(req.state_name);
+    let city_ibge_code = req.city_ibge_code;
+    let city_name = normalize_optional_text(req.city_name);
     let notes = normalize_optional_text(req.notes);
     let is_active = req.is_active.unwrap_or(true);
 
@@ -172,8 +271,19 @@ async fn create_person(
                 email = COALESCE($4, email),
                 phone = COALESCE($5, phone),
                 document = COALESCE($6, document),
-                notes = COALESCE($7, notes),
-                is_active = $8
+                photo_url = COALESCE($7, photo_url),
+                zip_code = COALESCE($8, zip_code),
+                street = COALESCE($9, street),
+                address_number = COALESCE($10, address_number),
+                neighborhood = COALESCE($11, neighborhood),
+                complement = COALESCE($12, complement),
+                state_ibge_code = COALESCE($13, state_ibge_code),
+                state_uf = COALESCE($14, state_uf),
+                state_name = COALESCE($15, state_name),
+                city_ibge_code = COALESCE($16, city_ibge_code),
+                city_name = COALESCE($17, city_name),
+                notes = COALESCE($18, notes),
+                is_active = $19
             WHERE tenant_id = $1 AND id = $2
             "#,
         )
@@ -183,6 +293,17 @@ async fn create_person(
         .bind(&email)
         .bind(&phone)
         .bind(&document)
+        .bind(&photo_url)
+        .bind(&zip_code)
+        .bind(&street)
+        .bind(&address_number)
+        .bind(&neighborhood)
+        .bind(&complement)
+        .bind(state_ibge_code)
+        .bind(&state_uf)
+        .bind(&state_name)
+        .bind(city_ibge_code)
+        .bind(&city_name)
         .bind(&notes)
         .bind(is_active)
         .execute(&mut *tx)
@@ -193,8 +314,15 @@ async fn create_person(
         let id = Uuid::new_v4();
         sqlx::query(
             r#"
-            INSERT INTO people (id, tenant_id, person_type, full_name, email, phone, document, notes, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO people (
+              id, tenant_id, person_type, full_name, email, phone, document, photo_url,
+              zip_code, street, address_number, neighborhood, complement,
+              state_ibge_code, state_uf, state_name, city_ibge_code, city_name,
+              notes, is_active
+            )
+            VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+            )
             "#,
         )
         .bind(id)
@@ -204,6 +332,17 @@ async fn create_person(
         .bind(&email)
         .bind(&phone)
         .bind(&document)
+        .bind(&photo_url)
+        .bind(&zip_code)
+        .bind(&street)
+        .bind(&address_number)
+        .bind(&neighborhood)
+        .bind(&complement)
+        .bind(state_ibge_code)
+        .bind(&state_uf)
+        .bind(&state_name)
+        .bind(city_ibge_code)
+        .bind(&city_name)
         .bind(&notes)
         .bind(is_active)
         .execute(&mut *tx)
@@ -239,8 +378,19 @@ async fn update_person(
             email = $4,
             phone = $5,
             document = $6,
-            notes = $7,
-            is_active = $8
+            photo_url = $7,
+            zip_code = $8,
+            street = $9,
+            address_number = $10,
+            neighborhood = $11,
+            complement = $12,
+            state_ibge_code = $13,
+            state_uf = $14,
+            state_name = $15,
+            city_ibge_code = $16,
+            city_name = $17,
+            notes = $18,
+            is_active = $19
         WHERE tenant_id = $1 AND id = $2
         RETURNING id
         "#,
@@ -251,6 +401,17 @@ async fn update_person(
     .bind(normalize_optional_text(req.email))
     .bind(normalize_optional_text(req.phone))
     .bind(normalize_optional_text(req.document))
+    .bind(normalize_optional_text(req.photo_url))
+    .bind(normalize_optional_text(req.zip_code))
+    .bind(normalize_optional_text(req.street))
+    .bind(normalize_optional_text(req.address_number))
+    .bind(normalize_optional_text(req.neighborhood))
+    .bind(normalize_optional_text(req.complement))
+    .bind(req.state_ibge_code)
+    .bind(normalize_optional_text(req.state_uf).map(|v| v.to_uppercase()))
+    .bind(normalize_optional_text(req.state_name))
+    .bind(req.city_ibge_code)
+    .bind(normalize_optional_text(req.city_name))
     .bind(normalize_optional_text(req.notes))
     .bind(req.is_active)
     .fetch_optional(&state.pool)
@@ -446,6 +607,222 @@ async fn remove_role(
         .map(Json)
 }
 
+async fn update_parent_students(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(person_id): Path<Uuid>,
+    Json(req): Json<UpdateParentStudentsRequest>,
+) -> Result<Json<PersonResponse>, (StatusCode, String)> {
+    user.require_any_role(&["owner", "admin", "staff"])?;
+
+    let exists = sqlx::query("SELECT 1 FROM people WHERE tenant_id = $1 AND id = $2")
+        .bind(user.tenant_id)
+        .bind(person_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+    if exists.is_none() {
+        return Err((StatusCode::NOT_FOUND, "Cadastro não encontrado".into()));
+    }
+
+    let has_parent_role = sqlx::query(
+        r#"SELECT 1 FROM person_roles WHERE person_id = $1 AND role_code = 'parent' LIMIT 1"#,
+    )
+    .bind(person_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+    if has_parent_role.is_none() {
+        return Err((StatusCode::BAD_REQUEST, "A pessoa precisa ter o papel Pai/Mãe para vincular alunos".into()));
+    }
+
+    ensure_students_belong_to_tenant(&state.pool, user.tenant_id, &req.student_ids).await?;
+
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+
+    sqlx::query(
+        r#"DELETE FROM parent_students
+           WHERE tenant_id = $1 AND parent_person_id = $2"#,
+    )
+    .bind(user.tenant_id)
+    .bind(person_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+
+    for student_id in &req.student_ids {
+        sqlx::query(
+            r#"
+            INSERT INTO parent_students (parent_person_id, student_id, tenant_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (parent_person_id, student_id) DO NOTHING
+            "#,
+        )
+        .bind(person_id)
+        .bind(student_id)
+        .bind(user.tenant_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+
+    fetch_person_response(&state.pool, user.tenant_id, person_id)
+        .await
+        .map(Json)
+}
+
+async fn update_pickup_students(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(person_id): Path<Uuid>,
+    Json(req): Json<UpdatePickupStudentsRequest>,
+) -> Result<Json<PersonResponse>, (StatusCode, String)> {
+    user.require_any_role(&["owner", "admin", "staff"])?;
+
+    let exists = sqlx::query("SELECT 1 FROM people WHERE tenant_id = $1 AND id = $2")
+        .bind(user.tenant_id)
+        .bind(person_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+    if exists.is_none() {
+        return Err((StatusCode::NOT_FOUND, "Cadastro não encontrado".into()));
+    }
+
+    let has_role = sqlx::query(
+        r#"SELECT 1 FROM person_roles WHERE person_id = $1 AND role_code = 'pickup_authorized' LIMIT 1"#,
+    )
+    .bind(person_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+    if has_role.is_none() {
+        return Err((StatusCode::BAD_REQUEST, "A pessoa precisa ter o papel Autorizado para Buscar Aluno".into()));
+    }
+
+    ensure_students_belong_to_tenant(&state.pool, user.tenant_id, &req.student_ids).await?;
+
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+
+    sqlx::query(
+        r#"DELETE FROM pickup_authorized_students
+           WHERE tenant_id = $1 AND pickup_person_id = $2"#,
+    )
+    .bind(user.tenant_id)
+    .bind(person_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+
+    for student_id in &req.student_ids {
+        sqlx::query(
+            r#"
+            INSERT INTO pickup_authorized_students (pickup_person_id, student_id, tenant_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (pickup_person_id, student_id) DO NOTHING
+            "#,
+        )
+        .bind(person_id)
+        .bind(student_id)
+        .bind(user.tenant_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+
+    fetch_person_response(&state.pool, user.tenant_id, person_id)
+        .await
+        .map(Json)
+}
+
+async fn update_financial_students(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(person_id): Path<Uuid>,
+    Json(req): Json<UpdateFinancialStudentsRequest>,
+) -> Result<Json<PersonResponse>, (StatusCode, String)> {
+    user.require_any_role(&["owner", "admin", "staff"])?;
+
+    let exists = sqlx::query("SELECT 1 FROM people WHERE tenant_id = $1 AND id = $2")
+        .bind(user.tenant_id)
+        .bind(person_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+    if exists.is_none() {
+        return Err((StatusCode::NOT_FOUND, "Cadastro não encontrado".into()));
+    }
+
+    let has_role = sqlx::query(
+        r#"SELECT 1 FROM person_roles WHERE person_id = $1 AND role_code = 'financial_guardian' LIMIT 1"#,
+    )
+    .bind(person_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+    if has_role.is_none() {
+        return Err((StatusCode::BAD_REQUEST, "A pessoa precisa ter o papel Responsável Financeiro".into()));
+    }
+
+    ensure_students_belong_to_tenant(&state.pool, user.tenant_id, &req.student_ids).await?;
+
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+
+    sqlx::query(
+        r#"DELETE FROM financial_guardian_students
+           WHERE tenant_id = $1 AND financial_person_id = $2"#,
+    )
+    .bind(user.tenant_id)
+    .bind(person_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+
+    for student_id in &req.student_ids {
+        sqlx::query(
+            r#"
+            INSERT INTO financial_guardian_students (financial_person_id, student_id, tenant_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (financial_person_id, student_id) DO NOTHING
+            "#,
+        )
+        .bind(person_id)
+        .bind(student_id)
+        .bind(user.tenant_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+
+    fetch_person_response(&state.pool, user.tenant_id, person_id)
+        .await
+        .map(Json)
+}
+
 async fn fetch_person_response(
     pool: &PgPool,
     tenant_id: Uuid,
@@ -461,16 +838,50 @@ async fn fetch_person_response(
           p.email,
           p.phone,
           p.document,
+          p.photo_url,
+          p.zip_code,
+          p.street,
+          p.address_number,
+          p.neighborhood,
+          p.complement,
+          p.state_ibge_code,
+          p.state_uf,
+          p.state_name,
+          p.city_ibge_code,
+          p.city_name,
+          COALESCE(
+            ARRAY_AGG(DISTINCT ps.student_id ORDER BY ps.student_id) FILTER (WHERE ps.student_id IS NOT NULL),
+            ARRAY[]::uuid[]
+          ) AS parent_student_ids,
+          COALESCE(
+            ARRAY_AGG(DISTINCT pas.student_id ORDER BY pas.student_id) FILTER (WHERE pas.student_id IS NOT NULL),
+            ARRAY[]::uuid[]
+          ) AS pickup_student_ids,
+          COALESCE(
+            ARRAY_AGG(DISTINCT fgs.student_id ORDER BY fgs.student_id) FILTER (WHERE fgs.student_id IS NOT NULL),
+            ARRAY[]::uuid[]
+          ) AS financial_student_ids,
           p.notes,
           p.is_active,
           COALESCE(
-            ARRAY_AGG(pr.role_code ORDER BY pr.role_code) FILTER (WHERE pr.role_code IS NOT NULL),
+            ARRAY_AGG(DISTINCT pr.role_code ORDER BY pr.role_code) FILTER (WHERE pr.role_code IS NOT NULL),
             ARRAY[]::text[]
           ) AS role_codes
         FROM people p
         LEFT JOIN person_roles pr ON pr.person_id = p.id
+        LEFT JOIN parent_students ps
+          ON ps.parent_person_id = p.id
+         AND ps.tenant_id = p.tenant_id
+        LEFT JOIN pickup_authorized_students pas
+          ON pas.pickup_person_id = p.id
+         AND pas.tenant_id = p.tenant_id
+        LEFT JOIN financial_guardian_students fgs
+          ON fgs.financial_person_id = p.id
+         AND fgs.tenant_id = p.tenant_id
         WHERE p.tenant_id = $1 AND p.id = $2
-        GROUP BY p.id, p.tenant_id, p.person_type, p.full_name, p.email, p.phone, p.document, p.notes, p.is_active
+        GROUP BY p.id, p.tenant_id, p.person_type, p.full_name, p.email, p.phone, p.document, p.photo_url, p.zip_code, p.street,
+                 p.address_number, p.neighborhood, p.complement, p.state_ibge_code, p.state_uf, p.state_name,
+                 p.city_ibge_code, p.city_name, p.notes, p.is_active
         "#,
     )
     .bind(tenant_id)
@@ -493,6 +904,20 @@ fn map_person_row(r: sqlx::postgres::PgRow) -> PersonResponse {
         email: r.get("email"),
         phone: r.get("phone"),
         document: r.get("document"),
+        photo_url: r.get("photo_url"),
+        zip_code: r.get("zip_code"),
+        street: r.get("street"),
+        address_number: r.get("address_number"),
+        neighborhood: r.get("neighborhood"),
+        complement: r.get("complement"),
+        state_ibge_code: r.get("state_ibge_code"),
+        state_uf: r.get("state_uf"),
+        state_name: r.get("state_name"),
+        city_ibge_code: r.get("city_ibge_code"),
+        city_name: r.get("city_name"),
+        parent_student_ids: r.get("parent_student_ids"),
+        pickup_student_ids: r.get("pickup_student_ids"),
+        financial_student_ids: r.get("financial_student_ids"),
         notes: r.get("notes"),
         is_active: r.get("is_active"),
     }
@@ -525,6 +950,42 @@ async fn ensure_role_can_be_removed(
             .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
         if linked.is_some() {
             return Err((StatusCode::BAD_REQUEST, "Remova primeiro o vínculo do módulo Resp. Vinculados".into()));
+        }
+    }
+
+    if role_code == "parent" {
+        let linked = sqlx::query("SELECT 1 FROM parent_students WHERE tenant_id = $1 AND parent_person_id = $2")
+            .bind(tenant_id)
+            .bind(person_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+        if linked.is_some() {
+            return Err((StatusCode::BAD_REQUEST, "Remova primeiro os vínculos de alunos do Pai/Mãe".into()));
+        }
+    }
+
+    if role_code == "pickup_authorized" {
+        let linked = sqlx::query("SELECT 1 FROM pickup_authorized_students WHERE tenant_id = $1 AND pickup_person_id = $2")
+            .bind(tenant_id)
+            .bind(person_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+        if linked.is_some() {
+            return Err((StatusCode::BAD_REQUEST, "Remova primeiro os vínculos de alunos do Autorizado para Buscar".into()));
+        }
+    }
+
+    if role_code == "financial_guardian" {
+        let linked = sqlx::query("SELECT 1 FROM financial_guardian_students WHERE tenant_id = $1 AND financial_person_id = $2")
+            .bind(tenant_id)
+            .bind(person_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+        if linked.is_some() {
+            return Err((StatusCode::BAD_REQUEST, "Remova primeiro os vínculos de alunos do Responsável Financeiro".into()));
         }
     }
 
@@ -608,8 +1069,31 @@ fn normalize_person_type(value: &str) -> Result<&str, (StatusCode, String)> {
         "staff" => Ok("staff"),
         "supplier" => Ok("supplier"),
         "financial_guardian" => Ok("financial_guardian"),
+        "pickup_authorized" => Ok("pickup_authorized"),
         _ => Err((StatusCode::BAD_REQUEST, "Tipo de cadastro inválido".into())),
     }
+}
+
+async fn ensure_students_belong_to_tenant(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    student_ids: &[Uuid],
+) -> Result<(), (StatusCode, String)> {
+    for student_id in student_ids {
+        let row = sqlx::query(
+            r#"SELECT 1 FROM students WHERE tenant_id = $1 AND id = $2"#,
+        )
+        .bind(tenant_id)
+        .bind(student_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Erro DB".into()))?;
+
+        if row.is_none() {
+            return Err((StatusCode::BAD_REQUEST, "Aluno inválido para este tenant".into()));
+        }
+    }
+    Ok(())
 }
 
 fn normalize_optional_text(input: Option<String>) -> Option<String> {

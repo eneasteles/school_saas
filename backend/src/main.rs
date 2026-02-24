@@ -48,6 +48,7 @@ async fn main() {
         .merge(routes::classes::routes(pool.clone(), cfg.jwt_secret.clone()))
         .merge(routes::guardians::routes(pool.clone(), cfg.jwt_secret.clone()))
         .merge(routes::people::routes(pool.clone(), cfg.jwt_secret.clone()))
+        .merge(routes::financial::routes(pool.clone(), cfg.jwt_secret.clone()))
         .layer(cors);
 
     let listener = tokio::net::TcpListener::bind(&cfg.bind_addr)
