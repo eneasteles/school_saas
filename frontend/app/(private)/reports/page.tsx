@@ -23,6 +23,8 @@ type Student = {
   class_id: string | null;
   birth_date: string | null;
   student_email: string | null;
+  is_inclusion?: boolean | null;
+  inclusion_type?: string | null;
 };
 
 type Guardian = {
@@ -50,6 +52,7 @@ const API = process.env.NEXT_PUBLIC_API_BASE;
 const REPORT_OPTIONS = [
   { value: "people_all", label: "Cadastros (todos)" },
   { value: "students", label: "Alunos" },
+  { value: "students_inclusion", label: "Alunos de Inclusão" },
   { value: "parents", label: "Pais/Mães" },
   { value: "guardians", label: "Resp. Vinculados" },
   { value: "teachers", label: "Professores/Equipe" },
@@ -94,7 +97,7 @@ export default function ReportsPage() {
         setPeopleRows((await basePeopleRes.json()) as Person[]);
       }
 
-      if (reportType === "students") {
+      if (reportType === "students" || reportType === "students_inclusion") {
         try {
           const res = await fetch(`${API}/students`, {
             headers: { Authorization: `Bearer ${token}` },
@@ -118,6 +121,8 @@ export default function ReportsPage() {
               class_id: null,
               birth_date: extractBirthDate(p.notes),
               student_email: p.email,
+              is_inclusion: null,
+              inclusion_type: null,
             })),
           );
         }
@@ -223,6 +228,8 @@ export default function ReportsPage() {
         class_id: null,
         birth_date: extractBirthDate(p.notes),
         student_email: p.email,
+        is_inclusion: null,
+        inclusion_type: null,
       }))
       .filter((s) => {
         if (!q) return true;
@@ -314,6 +321,10 @@ export default function ReportsPage() {
   }, [peopleRows, reportType, search]);
 
   const effectiveStudents = filteredStudents.length > 0 ? filteredStudents : derivedStudentsFromPeople;
+  const effectiveInclusionStudents = useMemo(
+    () => effectiveStudents.filter((s) => s.is_inclusion === true),
+    [effectiveStudents],
+  );
   const effectiveGuardians = filteredGuardians.length > 0 ? filteredGuardians : derivedGuardiansFromPeople;
   const effectiveTeachers = filteredTeachers.length > 0 ? filteredTeachers : derivedTeachersFromPeople;
 
@@ -321,7 +332,7 @@ export default function ReportsPage() {
     const rows = buildCsvRows({
       reportType,
       peopleRows: filteredPeopleRows,
-      studentsRows: effectiveStudents,
+      studentsRows: reportType === "students_inclusion" ? effectiveInclusionStudents : effectiveStudents,
       guardiansRows: effectiveGuardians,
       teachersRows: effectiveTeachers,
     });
@@ -339,6 +350,8 @@ export default function ReportsPage() {
   const totalCount =
     reportType === "students"
       ? effectiveStudents.length
+      : reportType === "students_inclusion"
+        ? effectiveInclusionStudents.length
       : reportType === "guardians"
         ? effectiveGuardians.length
         : reportType === "teachers"
@@ -397,24 +410,30 @@ export default function ReportsPage() {
             <span className="text-xs font-semibold text-neutral-700">{loading ? "Carregando..." : `${totalCount} registro(s)`}</span>
           </div>
 
-          {reportType === "students" && (
+          {(reportType === "students" || reportType === "students_inclusion") && (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[700px] text-left text-sm text-neutral-900">
+              <table className="w-full min-w-[900px] text-left text-sm text-neutral-900">
                 <thead>
                   <tr className="border-b-2 border-neutral-300 bg-neutral-100 text-neutral-900">
                     <th className="px-3 py-2 font-bold">Nome</th>
                     <th className="px-3 py-2 font-bold">Matrícula</th>
                     <th className="px-3 py-2 font-bold">Nascimento</th>
                     <th className="px-3 py-2 font-bold">E-mail</th>
+                    <th className="px-3 py-2 font-bold">Inclusão</th>
+                    <th className="px-3 py-2 font-bold">Tipo de inclusão</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {effectiveStudents.map((s) => (
+                  {(reportType === "students_inclusion" ? effectiveInclusionStudents : effectiveStudents).map((s) => (
                     <tr key={s.id} className="border-b border-neutral-100">
                       <td className="px-3 py-2 font-medium">{s.name}</td>
                       <td className="px-3 py-2">{s.registration}</td>
                       <td className="px-3 py-2">{s.birth_date || "-"}</td>
                       <td className="px-3 py-2">{s.student_email || "-"}</td>
+                      <td className="px-3 py-2">
+                        {s.is_inclusion === null || s.is_inclusion === undefined ? "-" : s.is_inclusion ? "Sim" : "Não"}
+                      </td>
+                      <td className="px-3 py-2">{s.inclusion_type || "-"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -472,7 +491,7 @@ export default function ReportsPage() {
             </div>
           )}
 
-          {!["students", "guardians", "teachers"].includes(reportType) && (
+          {!["students", "students_inclusion", "guardians", "teachers"].includes(reportType) && (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[900px] text-left text-sm text-neutral-900">
                 <thead>
@@ -524,10 +543,17 @@ function buildCsvRows({
   guardiansRows: Guardian[];
   teachersRows: Teacher[];
 }): string[][] {
-  if (reportType === "students") {
+  if (reportType === "students" || reportType === "students_inclusion") {
     return [
-      ["Nome", "Matricula", "Nascimento", "Email"],
-      ...studentsRows.map((s) => [s.name, s.registration, s.birth_date ?? "", s.student_email ?? ""]),
+      ["Nome", "Matricula", "Nascimento", "Email", "Inclusao", "TipoInclusao"],
+      ...studentsRows.map((s) => [
+        s.name,
+        s.registration,
+        s.birth_date ?? "",
+        s.student_email ?? "",
+        s.is_inclusion == null ? "" : s.is_inclusion ? "Sim" : "Nao",
+        s.inclusion_type ?? "",
+      ]),
     ];
   }
   if (reportType === "guardians") {
